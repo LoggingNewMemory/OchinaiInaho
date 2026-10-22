@@ -1,19 +1,61 @@
-*.iml
-.gradle
-/local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
-.DS_Store
-/build
-/captures
-.externalNativeBuild
-.cxx
+# ==========================================
+# Rust & Native Build Artifacts
+# ==========================================
+/inaho_rust/target/
+target/
+*.pdb
+**/*.rs.bk
+
+# Generated JNI shared libraries
+/AppSource/app/src/main/jniLibs/
+**/jniLibs/
+
+# Android NDK / CMake cache
+.cxx/
+**/.cxx/
+.externalNativeBuild/
+**/.externalNativeBuild/
+
+# ==========================================
+# Android & Gradle Build Artifacts
+# ==========================================
+.gradle/
+**/.gradle/
+build/
+**/build/
+.kotlin/
+**/.kotlin/
+captures/
+**/captures/
+
+# Local Android SDK configuration
 local.properties
-/Designs/Exported
+**/local.properties
+
+# APKs, Bundles, and Keystores
+*.apk
+*.aab
 *.jks
-/AppSource/app/build
-/AppSource/app/release
+*.keystore
+/AppSource/app/release/
+
+# ==========================================
+# IDE & Editor Files
+# ==========================================
+.idea/
+**/.idea/
+*.iml
+**/*.iml
+.vscode/
+**/.vscode/
+
+# ==========================================
+# Temporary & Design Files
+# ==========================================
+.DS_Store
+Thumbs.db
+*.tmp
+*~
+/Designs/Exported/
+**/.$*
+*.bkp

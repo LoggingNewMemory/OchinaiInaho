@@ -35,7 +35,7 @@ No accounts. No streaming. No cloud. Just your music, on your device.
 - **ReplayGain** — volume normalization across tracks (available in Yamada AE)
 - **Crossfade** — smooth transitions between tracks, adjustable duration
 - **Sleep timer** — auto-pause after 5, 10, 15, 20, 30, or 60 minutes
-- **Background & lock screen playback** — full `MediaSessionCompat` integration for rich media notifications and hardware controls
+- **Background & lock screen playback** — full `MediaLibrarySession` / AndroidX Media3 integration for rich media notifications and hardware controls
 - **Android Auto Support** — seamlessly browse and play your library, custom playlists, and toggle EQ presets right from your car's dashboard
 
 ### Lyrics Support
@@ -62,7 +62,7 @@ No accounts. No streaming. No cloud. Just your music, on your device.
 | Language | Kotlin |
 | UI | Jetpack Compose, Material Design 3, Palette API |
 | Concurrency | Kotlin Coroutines, StateFlow |
-| Playback | `MediaPlayer`, `MediaSessionCompat`, `MediaBrowserServiceCompat`, `MediaStore API` |
+| Playback | `MediaPlayer`, AndroidX `Media3` (`MediaLibraryService`, `MediaSession`), `MediaStore API` |
 | Audio FX | `Equalizer`, `DynamicsProcessing`, `LoudnessEnhancer`, `Visualizer` |
 | Metadata & Lyrics | `jaudiotagger`, LRCLIB API |
 | Pagination | AndroidX Paging 3 |

@@ -1,6 +1,5 @@
 package com.kanagawa.yamada.inaho.inahoservice
 
-import androidx.media.MediaBrowserServiceCompat
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -9,8 +8,13 @@ import android.media.AudioManager
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
-import android.provider.MediaStore
 import android.view.Surface
+import androidx.annotation.OptIn
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.session.DefaultMediaNotificationProvider
+import androidx.media3.session.MediaLibraryService
+import androidx.media3.session.MediaSession
+import com.kanagawa.yamada.inaho.R
 import com.kanagawa.yamada.inaho.Song
 import com.kanagawa.yamada.inaho.inahocar.AutoLibraryManager
 import kotlinx.coroutines.CoroutineScope
@@ -57,7 +61,8 @@ data class PlayerState(
 // ==========================================
 // PLAYER SERVICE
 // ==========================================
-class PlayerService : MediaBrowserServiceCompat() {
+@OptIn(UnstableApi::class)
+class PlayerService : MediaLibraryService() {
 
     private val binder = PlayerBinder()
 
@@ -75,8 +80,8 @@ class PlayerService : MediaBrowserServiceCompat() {
 
     private lateinit var playbackEngine: PlaybackEngine
     private lateinit var mediaSessionManager: MediaSessionManager
-    private lateinit var notificationManager: MediaNotificationManager
-    private lateinit var autoLibraryManager: AutoLibraryManager
+    lateinit var autoLibraryManager: AutoLibraryManager
+        private set
 
     private var positionJob: Job? = null
     private var isForeground = false
@@ -130,15 +135,25 @@ class PlayerService : MediaBrowserServiceCompat() {
             }
         )
 
-        mediaSessionManager = MediaSessionManager(this)
-        sessionToken = mediaSessionManager.mediaSession.sessionToken
-        notificationManager = MediaNotificationManager(this)
         autoLibraryManager = AutoLibraryManager(this)
+        mediaSessionManager = MediaSessionManager(this)
+
+        val notificationProvider = DefaultMediaNotificationProvider.Builder(this)
+            .setChannelId(MediaNotificationManager.CHANNEL_ID)
+            .setNotificationId(MediaNotificationManager.NOTIF_ID)
+            .build().apply {
+                setSmallIcon(R.drawable.ic_launcher_foreground)
+            }
+        setMediaNotificationProvider(notificationProvider)
         
         playlistPrefs = getSharedPreferences("inaho_playlists", Context.MODE_PRIVATE)
         playlistPrefs.registerOnSharedPreferenceChangeListener(playlistPrefsListener)
 
         startPositionPoller()
+    }
+
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? {
+        return mediaSessionManager.mediaLibrarySession
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -148,39 +163,24 @@ class PlayerService : MediaBrowserServiceCompat() {
             MediaNotificationManager.ACTION_NEXT -> skipNext()
             MediaNotificationManager.ACTION_STOP -> stopPlayback()
         }
-        return START_NOT_STICKY
+        return super.onStartCommand(intent, flags, startId)
     }
 
     override fun onBind(intent: Intent?): IBinder? {
-        return if (intent?.action == "android.media.browse.MediaBrowserService") {
-            super.onBind(intent)
-        } else {
-            binder
-        }
+        return super.onBind(intent) ?: binder
     }
 
-    override fun onGetRoot(
-        clientPackageName: String,
-        clientUid: Int,
-        rootHints: android.os.Bundle?
-    ): BrowserRoot? {
-        return BrowserRoot(AutoLibraryManager.ROOT_ID, null)
-    }
-
-    override fun onLoadChildren(
-        parentId: String,
-        result: Result<MutableList<android.support.v4.media.MediaBrowserCompat.MediaItem>>
-    ) {
-        result.sendResult(autoLibraryManager.getChildren(parentId).toMutableList())
+    fun notifyChildrenChanged(parentId: String) {
+        mediaSessionManager.notifyChildrenChanged(parentId)
     }
 
     override fun onDestroy() {
-        super.onDestroy()
         playlistPrefs.unregisterOnSharedPreferenceChangeListener(playlistPrefsListener)
         unregisterReceiver(noisyReceiver)
         serviceJob.cancel()
         playbackEngine.stopPlayback()
         mediaSessionManager.release()
+        super.onDestroy()
     }
 
     // --- Media Control APIs ---
@@ -218,14 +218,14 @@ class PlayerService : MediaBrowserServiceCompat() {
             currentSong = song,
             positionMs = 0L,
             durationMs = song.durationMs,
-                hasRepeatedOnce = false,
+            hasRepeatedOnce = false,
             videoWidth = 0,
             videoHeight = 0
         )
 
         if (requestAudioFocus()) {
             playbackEngine.prepareAndPlay(song, false, _playerState.value)
-            startForegroundServiceNotification()
+            updateSessionAndNotification()
         }
     }
 
@@ -382,15 +382,8 @@ class PlayerService : MediaBrowserServiceCompat() {
             )
             if (requestAudioFocus()) {
                 playbackEngine.prepareAndPlay(shuffledQueue[0], false, _playerState.value)
-                startForegroundServiceNotification()
+                updateSessionAndNotification()
             }
-        } else {
-            mediaSessionManager.mediaSession.setPlaybackState(
-                android.support.v4.media.session.PlaybackStateCompat.Builder()
-                    .setState(android.support.v4.media.session.PlaybackStateCompat.STATE_ERROR, 0, 1.0f)
-                    .setErrorMessage(android.support.v4.media.session.PlaybackStateCompat.ERROR_CODE_APP_ERROR, "No music found on device")
-                    .build()
-            )
         }
     }
 
@@ -431,13 +424,6 @@ class PlayerService : MediaBrowserServiceCompat() {
             val song = matches.first()
             val index = allSongs.indexOf(song)
             playSong(song, allSongs, index)
-        } else {
-            mediaSessionManager.mediaSession.setPlaybackState(
-                android.support.v4.media.session.PlaybackStateCompat.Builder()
-                    .setState(android.support.v4.media.session.PlaybackStateCompat.STATE_ERROR, 0, 1.0f)
-                    .setErrorMessage(android.support.v4.media.session.PlaybackStateCompat.ERROR_CODE_APP_ERROR, "Song not found")
-                    .build()
-            )
         }
     }
 
@@ -492,6 +478,7 @@ class PlayerService : MediaBrowserServiceCompat() {
     fun stopPlayback() {
         playbackEngine.stopPlayback()
         _playerState.value = PlayerState()
+        updateSessionAndNotification()
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)
@@ -508,17 +495,7 @@ class PlayerService : MediaBrowserServiceCompat() {
         val pos = getCurrentPosition()
         serviceScope.launch {
             mediaSessionManager.updateState(state, pos)
-            if (isForeground) {
-                notificationManager.updateNotification(state, mediaSessionManager.mediaSession.sessionToken)
-            }
         }
-    }
-
-    private fun startForegroundServiceNotification() {
-        mediaSessionManager.updateState(_playerState.value, getCurrentPosition())
-        val notif = notificationManager.buildNotification(_playerState.value, mediaSessionManager.mediaSession.sessionToken)
-        startForeground(MediaNotificationManager.NOTIF_ID, notif)
-        isForeground = true
     }
 
     private fun startPositionPoller() {

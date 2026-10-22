@@ -1,13 +1,15 @@
 package com.kanagawa.yamada.inaho.inahocar
 
 import android.content.Context
+import android.net.Uri
 import android.provider.MediaStore
-import android.support.v4.media.MediaBrowserCompat.MediaItem
-import android.support.v4.media.MediaDescriptionCompat
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import com.kanagawa.yamada.inaho.Song
 import com.kanagawa.yamada.inaho.PlaylistManager
 import com.kanagawa.yamada.inaho.YamadaAudioEngine
 import com.kanagawa.yamada.inaho.EqPreset
+import java.io.File
 
 class AutoLibraryManager(private val context: Context) {
 
@@ -19,30 +21,78 @@ class AutoLibraryManager(private val context: Context) {
         const val PREFIX_PLAYLIST = "playlist_"
         const val PREFIX_EQ = "preset_"
     }
-    
-    
 
     // Helper to create a browsable category item
     private fun createBrowsableItem(id: String, title: String, subtitle: String): MediaItem {
-        val description = MediaDescriptionCompat.Builder()
+        return MediaItem.Builder()
             .setMediaId(id)
-            .setTitle(title)
-            .setSubtitle(subtitle)
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setTitle(title)
+                    .setSubtitle(subtitle)
+                    .setIsBrowsable(true)
+                    .setIsPlayable(false)
+                    .build()
+            )
             .build()
-        return MediaItem(description, MediaItem.FLAG_BROWSABLE)
     }
 
     // Helper to create a playable song item
     private fun createPlayableItem(song: Song): MediaItem {
-        val description = MediaDescriptionCompat.Builder()
+        val artFile = File(context.cacheDir, "art/${song.id}.png")
+        val artUri = if (artFile.exists()) Uri.fromFile(artFile) else null
+
+        return MediaItem.Builder()
             .setMediaId(song.id.toString())
-            .setTitle(song.title)
-            .setSubtitle(song.artist)
+            .setRequestMetadata(
+                MediaItem.RequestMetadata.Builder()
+                    .setMediaUri(song.trackUri)
+                    .build()
+            )
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setTitle(song.title)
+                    .setArtist(song.artist)
+                    .setArtworkUri(artUri)
+                    .setIsBrowsable(false)
+                    .setIsPlayable(true)
+                    .build()
+            )
             .build()
-        return MediaItem(description, MediaItem.FLAG_PLAYABLE)
     }
 
     var lastBrowsedSongs: List<Song> = emptyList()
+
+    fun getItem(mediaId: String): MediaItem? {
+        if (mediaId == ROOT_ID) {
+            return MediaItem.Builder()
+                .setMediaId(ROOT_ID)
+                .setMediaMetadata(
+                    MediaMetadata.Builder()
+                        .setIsBrowsable(true)
+                        .setIsPlayable(false)
+                        .build()
+                )
+                .build()
+        }
+        if (mediaId == CATEGORY_SONGS) {
+            return createBrowsableItem(CATEGORY_SONGS, "Songs", "Browse all local music")
+        }
+        if (mediaId == CATEGORY_PLAYLISTS) {
+            return createBrowsableItem(CATEGORY_PLAYLISTS, "Playlists", "Browse custom playlists")
+        }
+        if (mediaId == CATEGORY_EQ) {
+            return createBrowsableItem(CATEGORY_EQ, "Yamada AE", "Select Audio Preset")
+        }
+        val songId = mediaId.toLongOrNull()
+        if (songId != null) {
+            val song = fetchSongs(null, null).find { it.id == songId }
+            if (song != null) {
+                return createPlayableItem(song)
+            }
+        }
+        return null
+    }
 
     fun getChildren(parentId: String): List<MediaItem> {
         val items = mutableListOf<MediaItem>()
@@ -97,28 +147,34 @@ class AutoLibraryManager(private val context: Context) {
                 
                 val rgStateStr = if (rgEnabled) "On" else "Off"
                 items.add(
-                    MediaItem(
-                        MediaDescriptionCompat.Builder()
-                            .setMediaId("action_toggle_replaygain")
-                            .setTitle("Toggle ReplayGain ($rgStateStr)")
-                            .setSubtitle("Normalize volume across tracks")
-                            .build(),
-                        MediaItem.FLAG_PLAYABLE
-                    )
+                    MediaItem.Builder()
+                        .setMediaId("action_toggle_replaygain")
+                        .setMediaMetadata(
+                            MediaMetadata.Builder()
+                                .setTitle("Toggle ReplayGain ($rgStateStr)")
+                                .setSubtitle("Normalize volume across tracks")
+                                .setIsBrowsable(false)
+                                .setIsPlayable(true)
+                                .build()
+                        )
+                        .build()
                 )
 
                 EqPreset.values().forEach { preset ->
                     val isActive = preset.name == currentPresetName
                     val titleSuffix = if (isActive) " (Active)" else ""
                     items.add(
-                        MediaItem(
-                            MediaDescriptionCompat.Builder()
-                                .setMediaId("$PREFIX_EQ${preset.name}")
-                                .setTitle("${preset.emoji} ${preset.displayName}$titleSuffix")
-                                .setSubtitle(preset.description)
-                                .build(),
-                            MediaItem.FLAG_PLAYABLE
-                        )
+                        MediaItem.Builder()
+                            .setMediaId("$PREFIX_EQ${preset.name}")
+                            .setMediaMetadata(
+                                MediaMetadata.Builder()
+                                    .setTitle("${preset.emoji} ${preset.displayName}$titleSuffix")
+                                    .setSubtitle(preset.description)
+                                    .setIsBrowsable(false)
+                                    .setIsPlayable(true)
+                                    .build()
+                            )
+                            .build()
                     )
                 }
             }

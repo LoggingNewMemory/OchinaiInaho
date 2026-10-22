@@ -1,3 +1,21 @@
+/*
+ * Inaho Music Player - Native Fast Cover Art Extractor
+ * Copyright (C) 2026 Kanagawa Yamada
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package com.kanagawa.yamada.inaho
 
 import android.content.Context
@@ -6,7 +24,65 @@ import java.io.InputStream
 
 object FastArtExtractor {
 
+    private var isNativeLoaded = false
+
+    init {
+        try {
+            System.loadLibrary("inaho_rust")
+            isNativeLoaded = true
+        } catch (e: Throwable) {
+            e.printStackTrace()
+            isNativeLoaded = false
+        }
+    }
+
+    @JvmStatic
+    private external fun nativeExtractArtFd(fd: Int): ByteArray?
+
+    @JvmStatic
+    private external fun nativeExtractArtFromBytes(data: ByteArray): ByteArray?
+
+    @JvmStatic
+    private external fun nativeExtractArtFromPath(path: String): ByteArray?
+
     fun extractArt(context: Context, uri: Uri): ByteArray? {
+        if (isNativeLoaded) {
+            // 1. FASTEST: Direct file path
+            if (uri.scheme == "file") {
+                val path = uri.path
+                if (path != null) {
+                    try {
+                        val art = nativeExtractArtFromPath(path)
+                        if (art != null) return art
+                    } catch (_: Exception) {}
+                }
+            }
+
+            // 2. KERNEL ZERO-COPY: Open Linux File Descriptor directly via ContentResolver
+            try {
+                context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                    val art = nativeExtractArtFd(pfd.fd)
+                    if (art != null) return art
+                }
+            } catch (_: Exception) {}
+
+            // 3. Fallback to stream bytes into Rust if fd is not seekable
+            try {
+                context.contentResolver.openInputStream(uri)?.use { stream ->
+                    val bytes = stream.readBytes()
+                    if (bytes.isNotEmpty()) {
+                        val art = nativeExtractArtFromBytes(bytes)
+                        if (art != null) return art
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        // 4. KOTLIN FALLBACK (Used if native library is unavailable or encounters error)
+        return extractArtKotlinFallback(context, uri)
+    }
+
+    private fun extractArtKotlinFallback(context: Context, uri: Uri): ByteArray? {
         return try {
             context.contentResolver.openInputStream(uri)?.use { stream ->
                 // Read magic bytes to determine format
@@ -122,19 +198,6 @@ object FastArtExtractor {
             if (type == 6) { // PICTURE
                 val data = ByteArray(length)
                 if (stream.read(data) < length) return null
-                
-                // FLAC picture block:
-                // 4 bytes: picture type
-                // 4 bytes: MIME type length
-                // MIME type string
-                // 4 bytes: description length
-                // description string
-                // 4 bytes: width
-                // 4 bytes: height
-                // 4 bytes: color depth
-                // 4 bytes: colors used
-                // 4 bytes: picture data length
-                // picture data
                 
                 var offset = 4
                 val mimeLen = readInt32(data, offset); offset += 4 + mimeLen

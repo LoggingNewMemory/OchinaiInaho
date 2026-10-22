@@ -33,6 +33,26 @@ android {
     buildFeatures {
         compose = true
     }
+    sourceSets {
+        getByName("main") {
+            jniLibs.directories.add("src/main/jniLibs")
+        }
+    }
+}
+
+tasks.register<Exec>("buildRustNative") {
+    val rustDir = file("${project.rootDir}/../inaho_rust")
+    val cargoPath = File("${System.getProperty("user.home")}/.cargo/bin/cargo")
+    val cargoBin = if (cargoPath.exists()) cargoPath.absolutePath else "cargo"
+
+    onlyIf { rustDir.exists() }
+    workingDir = rustDir
+    environment("PATH", "${System.getProperty("user.home")}/.cargo/bin:" + System.getenv("PATH"))
+    commandLine(cargoBin, "ndk", "-t", "arm64-v8a", "-o", "${projectDir}/src/main/jniLibs", "build", "--release")
+}
+
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("JniLibFolders") }.configureEach {
+    dependsOn("buildRustNative")
 }
 
 dependencies {
@@ -60,6 +80,10 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.9.0")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.media:media:1.7.0")
+    implementation(libs.androidx.media3.session)
+    implementation(libs.androidx.media3.common)
+    implementation(libs.androidx.car.app)
+    implementation(libs.androidx.car.app.projected)
     implementation("sh.calvin.reorderable:reorderable:2.4.0")
     implementation("net.jthink:jaudiotagger:3.0.1")
 }
