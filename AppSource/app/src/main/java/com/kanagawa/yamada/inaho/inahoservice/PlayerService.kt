@@ -187,11 +187,8 @@ class PlayerService : MediaBrowserServiceCompat() {
     
     val eqEngine get() = playbackEngine.eqEngine
     val currentSurface get() = playbackEngine.currentSurface
-    val currentBgSurface get() = playbackEngine.currentBgSurface
 
     fun setVideoSurface(surface: Surface?) = playbackEngine.setVideoSurface(surface)
-
-    fun setBgVideoSurface(surface: Surface?) = playbackEngine.setBgVideoSurface(surface)
 
     private fun requestAudioFocus(): Boolean {
         val result = audioManager.requestAudioFocus(
@@ -464,7 +461,11 @@ class PlayerService : MediaBrowserServiceCompat() {
         }
     }
 
-    fun getCurrentPosition(): Long = playbackEngine.mediaPlayer?.currentPosition?.toLong() ?: 0L
+    fun getCurrentPosition(): Long = try {
+        playbackEngine.mediaPlayer?.currentPosition?.toLong() ?: 0L
+    } catch (_: Exception) {
+        _playerState.value.positionMs
+    }
 
     fun jumpToQueueIndex(index: Int) {
         val state = _playerState.value

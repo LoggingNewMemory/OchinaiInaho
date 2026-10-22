@@ -25,7 +25,6 @@ import androidx.compose.ui.viewinterop.AndroidView
 @Composable
 fun AMVVideoSurface(
     playerService: PlayerService?,
-    isBackground: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val playerState by PlayerService.playerState.collectAsState()
@@ -59,15 +58,13 @@ fun AMVVideoSurface(
                     override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
                         val surface = Surface(texture)
                         tag = surface
-                        if (isBackground) playerService?.setBgVideoSurface(surface)
-                        else playerService?.setVideoSurface(surface)
+                        playerService?.setVideoSurface(surface)
                     }
 
                     override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) {}
 
                     override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
-                        if (isBackground) playerService?.setBgVideoSurface(null)
-                        else playerService?.setVideoSurface(null)
+                        playerService?.setVideoSurface(null)
 
                         (tag as? Surface)?.release()
                         tag = null
@@ -86,14 +83,9 @@ fun AMVVideoSurface(
                     existingSurface?.release()
                     existingSurface = Surface(view.surfaceTexture)
                     view.tag = existingSurface
-                    if (isBackground) playerService.setBgVideoSurface(existingSurface)
-                    else playerService.setVideoSurface(existingSurface)
-                } else {
-                    if (isBackground && playerService.currentBgSurface !== existingSurface) {
-                        playerService.setBgVideoSurface(existingSurface)
-                    } else if (!isBackground && playerService.currentSurface !== existingSurface) {
-                        playerService.setVideoSurface(existingSurface)
-                    }
+                    playerService.setVideoSurface(existingSurface)
+                } else if (playerService.currentSurface !== existingSurface) {
+                    playerService.setVideoSurface(existingSurface)
                 }
             }
 

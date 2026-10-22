@@ -246,30 +246,17 @@ fun PlayerScreen(
             Modifier
         }
 
-        // Z-INDEX FIX: Video is ALWAYS fully rendered at the bottom to stop Android destroying the SurfaceTexture
-        Box(modifier = Modifier.fillMaxSize()) {
-            AMVVideoSurface(
-                playerService = playerService,
-                isBackground = true,
+        // 1. Dynamic Background Layer (Cover Art / Video Thumbnail)
+        if ((settings.showCoverBackground || isVideoFormat) && coverBitmap != null) {
+            Image(
+                bitmap = coverBitmap.asImageBitmap(),
+                contentDescription = "Blurred Background",
+                contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .fillMaxSize()
                     .scale(1.2f)
                     .then(optionalBlurModifier)
             )
-
-            // Dynamic Background Layer FADES IN OVER the video
-            if (settings.showCoverBackground && coverBitmap != null) {
-                Image(
-                    bitmap = coverBitmap.asImageBitmap(),
-                    contentDescription = "Blurred Background",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .scale(1.2f)
-                        .then(optionalBlurModifier)
-                        .alpha(coverAlpha)
-                )
-            }
         }
 
         // 2. Dim Overlay Layer
@@ -327,7 +314,9 @@ fun PlayerScreen(
                     Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                         val artLayerAlpha by animateFloatAsState(targetValue = if (showQueueSheet) 0f else 1f, label = "ArtLayerAlpha")
                         Box(modifier = Modifier.aspectRatio(1f, matchHeightConstraintsFirst = false).clip(RoundedCornerShape(12.dp)).background(surfaceColor).alpha(artLayerAlpha).clickable(enabled = !showQueueSheet) { isAmvModeActive = !isAmvModeActive }, contentAlignment = Alignment.Center) {
-                            AMVVideoSurface(playerService = playerService, isBackground = false, modifier = Modifier.fillMaxSize())
+                            if (isVideoFormat) {
+                                AMVVideoSurface(playerService = playerService, modifier = Modifier.fillMaxSize())
+                            }
                             if (coverBitmap != null) Image(bitmap = coverBitmap.asImageBitmap(), contentDescription = "Album Art", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().alpha(coverAlpha))
                             else Box(modifier = Modifier.fillMaxSize().alpha(coverAlpha).background(surfaceColor), contentAlignment = Alignment.Center) { Icon(imageVector = Icons.Default.MusicNote, contentDescription = null, tint = Color(0xFF3D2020), modifier = Modifier.size(80.dp)) }
                         }
@@ -469,11 +458,12 @@ fun PlayerScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     // AMV Video Surface always at the absolute bottom
-                    AMVVideoSurface(
-                        playerService = playerService,
-                        isBackground = false,
-                        modifier = Modifier.fillMaxSize()
-                    )
+                    if (isVideoFormat) {
+                        AMVVideoSurface(
+                            playerService = playerService,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
 
                     // Cover Art always ON TOP and fades IN to hide the video
                     if (coverBitmap != null) {

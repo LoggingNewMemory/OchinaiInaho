@@ -16,10 +16,8 @@ class PlaybackEngine(
     private val onStateUpdate: (PlayerState.() -> PlayerState) -> Unit
 ) {
     var mediaPlayer: MediaPlayer? = null
-    var bgMediaPlayer: MediaPlayer? = null
-    
     var currentSurface: Surface? = null
-    var currentBgSurface: Surface? = null
+    private var currentSong: Song? = null
     
     val eqEngine = YamadaAudioEngine(context).apply {
         onVolumeMultiplierChanged = { mult ->
@@ -33,10 +31,7 @@ class PlaybackEngine(
     private var crossfadeJob: Job? = null
     
     private var playGeneration = 0
-    private var isMainPrepared = false
-    private var isBgPrepared = false
     var isMainPreparing = false
-    private var isBgPreparing = false
     
     private var currentPlaybackSpeed = 1.0f
     private var currentPlaybackPitch = 1.0f
@@ -44,12 +39,9 @@ class PlaybackEngine(
 
     fun setVideoSurface(surface: Surface?) {
         currentSurface = surface
-        try { mediaPlayer?.setSurface(surface) } catch (_: Exception) {}
-    }
-
-    fun setBgVideoSurface(surface: Surface?) {
-        currentBgSurface = surface
-        try { bgMediaPlayer?.setSurface(surface) } catch (_: Exception) {}
+        if (currentSong?.isVideo == true) {
+            try { mediaPlayer?.setSurface(surface) } catch (_: Exception) {}
+        }
     }
     
     fun setPlaybackSpeedAndPitch(speed: Float, pitch: Float) {
@@ -57,19 +49,22 @@ class PlaybackEngine(
         currentPlaybackPitch = pitch
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             try { mediaPlayer?.let { mp -> mp.playbackParams = mp.playbackParams.setSpeed(speed).setPitch(pitch) } } catch (_: Exception) {}
-            try { bgMediaPlayer?.let { bg -> bg.playbackParams = bg.playbackParams.setSpeed(speed).setPitch(pitch) } } catch (_: Exception) {}
         }
     }
 
     fun togglePlayPause(isPlaying: Boolean) {
         try {
-            if (isPlaying) {
-                mediaPlayer?.pause()
-                bgMediaPlayer?.pause()
+            val mp = mediaPlayer
+            if (mp == null) {
+                onStateUpdate { copy(isPlaying = false) }
+                return
+            }
+            val currentlyPlaying = try { mp.isPlaying } catch (_: Exception) { isPlaying }
+            if (currentlyPlaying) {
+                try { mp.pause() } catch (e: Exception) { e.printStackTrace() }
                 onStateUpdate { copy(isPlaying = false) }
             } else {
-                mediaPlayer?.start()
-                bgMediaPlayer?.start()
+                try { mp.start() } catch (e: Exception) { e.printStackTrace() }
                 onStateUpdate { copy(isPlaying = true) }
             }
         } catch (e: Exception) {
@@ -81,10 +76,8 @@ class PlaybackEngine(
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 mediaPlayer?.seekTo(positionMs, MediaPlayer.SEEK_CLOSEST)
-                bgMediaPlayer?.seekTo(positionMs, MediaPlayer.SEEK_CLOSEST)
             } else {
                 mediaPlayer?.seekTo(positionMs.toInt())
-                bgMediaPlayer?.seekTo(positionMs.toInt())
             }
             onStateUpdate { copy(positionMs = positionMs) }
         } catch (e: Exception) {
@@ -99,11 +92,9 @@ class PlaybackEngine(
         
         eqEngine.release()
 
-        safelyDestroyPlayer(bgMediaPlayer)
-        bgMediaPlayer = null
-
         safelyDestroyPlayer(mediaPlayer)
         mediaPlayer = null
+        currentSong = null
     }
     
     fun prepareAndPlay(song: Song, isCrossfading: Boolean = false, currentState: PlayerState, playWhenReady: Boolean = true) {
@@ -117,14 +108,11 @@ class PlaybackEngine(
 
         eqEngine.release()
         val uri = song.trackUri
+        currentSong = song
 
         val generation = ++playGeneration
-        isMainPrepared = false
-        isBgPrepared = false
         currentPlayWhenReady = playWhenReady
-
         isMainPreparing = true
-        isBgPreparing = false
 
         if (doCrossfade) {
             fadeOutAndRelease(mediaPlayer, crossfadeSec)
@@ -159,119 +147,63 @@ class PlaybackEngine(
 
     private fun attachMainListeners(mp: MediaPlayer, song: Song, generation: Int, doCrossfade: Boolean, crossfadeSec: Float, currentState: PlayerState) {
         mp.setOnVideoSizeChangedListener { _, width, height ->
-            if (width > 0 && height > 0) {
+            if (generation == playGeneration && width > 0 && height > 0) {
                 onStateUpdate { copy(videoWidth = width, videoHeight = height) }
             }
         }
 
         mp.setOnPreparedListener { 
-            if (generation != playGeneration) return@setOnPreparedListener
+            if (generation != playGeneration) {
+                safelyDestroyPlayer(mp)
+                return@setOnPreparedListener
+            }
             android.os.Handler(android.os.Looper.getMainLooper()).post {
                 if (generation == playGeneration) {
                     eqEngine.attach(mp)
                 }
             }
-            onStateUpdate { copy(audioSessionId = mp.audioSessionId) }
+            onStateUpdate { copy(
+                audioSessionId = mp.audioSessionId,
+                durationMs = mp.duration.toLong(),
+                videoWidth = mp.videoWidth,
+                videoHeight = mp.videoHeight
+            ) }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && (currentPlaybackSpeed != 1.0f || currentPlaybackPitch != 1.0f)) {
                 try { mp.playbackParams = mp.playbackParams.setSpeed(currentPlaybackSpeed).setPitch(currentPlaybackPitch) } catch (_: Exception) {}
             }
 
             isMainPreparing = false
-            isMainPrepared = true
 
             if (song.isVideo && currentSurface?.isValid == true) {
                 try { mp.setSurface(currentSurface) } catch(_: Exception) {}
             }
 
-            if (song.isVideo) {
-                prepareBgPlayer(song, generation, currentState)
-            } else {
-                isBgPrepared = true
-                checkAndStartBoth(generation)
-                if (doCrossfade) fadeIn(mp, crossfadeSec)
-                startCrossfadePoller(currentState)
+            try {
+                if (currentPlayWhenReady) {
+                    mp.start()
+                }
+                onStateUpdate { copy(isPlaying = currentPlayWhenReady) }
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
+
+            if (doCrossfade) fadeIn(mp, crossfadeSec)
+            startCrossfadePoller(currentState)
         }
 
         mp.setOnCompletionListener {
-            onSongCompletion(false)
+            if (generation == playGeneration) {
+                onSongCompletion(false)
+            }
         }
 
         mp.setOnErrorListener { _, _, _ ->
             if (generation == playGeneration) {
                 isMainPreparing = false
-                isMainPrepared = true
                 onStateUpdate { copy(isPlaying = false) }
             }
             true
-        }
-    }
-
-    private fun prepareBgPlayer(song: Song, generation: Int, currentState: PlayerState) {
-        if (generation != playGeneration) return
-        isBgPreparing = true
-
-        bgMediaPlayer = MediaPlayer().apply {
-            try {
-                val attrBuilder = android.media.AudioAttributes.Builder()
-                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
-                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
-                setAudioAttributes(attrBuilder.build())
-
-                if (currentBgSurface?.isValid == true) {
-                    setSurface(currentBgSurface)
-                }
-
-                setVolume(0f, 0f)
-                setDataSource(context, song.trackUri)
-
-                setOnPreparedListener { mp ->
-                    if (generation != playGeneration) return@setOnPreparedListener
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && (currentPlaybackSpeed != 1.0f || currentPlaybackPitch != 1.0f)) {
-                        try { mp.playbackParams = mp.playbackParams.setSpeed(currentPlaybackSpeed).setPitch(currentPlaybackPitch) } catch (_: Exception) {}
-                    }
-                    isBgPreparing = false
-                    isBgPrepared = true
-                    checkAndStartBoth(generation)
-                }
-                setOnErrorListener { _, _, _ ->
-                    if (generation == playGeneration) {
-                        isBgPreparing = false
-                        isBgPrepared = true
-                        checkAndStartBoth(generation)
-                    }
-                    true
-                }
-                prepareAsync()
-            } catch (e: Exception) {
-                e.printStackTrace()
-                isBgPreparing = false
-                isBgPrepared = true
-                checkAndStartBoth(generation)
-            }
-        }
-    }
-
-    private fun checkAndStartBoth(generation: Int) {
-        if (generation != playGeneration) return
-        val mp = mediaPlayer ?: return
-
-        if (isMainPrepared && (bgMediaPlayer == null || isBgPrepared)) {
-            try {
-                if (currentPlayWhenReady) {
-                    bgMediaPlayer?.start()
-                    mp.start()
-                }
-                onStateUpdate { copy(
-                    isPlaying  = currentPlayWhenReady,
-                    durationMs = mp.duration.toLong(),
-                    videoWidth = mp.videoWidth,
-                    videoHeight = mp.videoHeight
-                ) }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
         }
     }
 
@@ -281,9 +213,13 @@ class PlaybackEngine(
         try { mp.setOnCompletionListener(null) } catch (_: Exception) {}
         try { mp.setOnErrorListener(null) } catch (_: Exception) {}
         try { mp.setOnVideoSizeChangedListener(null) } catch (_: Exception) {}
-        try { if (mp.isPlaying) mp.stop() } catch (_: Exception) {}
-        try { mp.reset() } catch (_: Exception) {}
-        try { mp.release() } catch (_: Exception) {}
+        try { mp.setSurface(null) } catch (_: Exception) {}
+        
+        CoroutineScope(Dispatchers.IO).launch {
+            try { if (mp.isPlaying) mp.stop() } catch (_: Exception) {}
+            try { mp.reset() } catch (_: Exception) {}
+            try { mp.release() } catch (_: Exception) {}
+        }
     }
 
     private fun fadeOutAndRelease(mp: MediaPlayer?, durationSec: Float) {
@@ -294,6 +230,7 @@ class PlaybackEngine(
         
         try { mp.setOnCompletionListener(null) } catch (_: Exception) {}
         try { mp.setOnErrorListener(null) } catch (_: Exception) {}
+        try { mp.setOnVideoSizeChangedListener(null) } catch (_: Exception) {}
         
         fadingOutPlayers.add(mp)
         serviceScope.launch {
